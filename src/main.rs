@@ -1,5 +1,20 @@
+use crate::error::HideError;
+
 mod error;
+
 mod rvm;
+
+#[inline(always)]
+#[allow(dead_code)]
+// Don't look it's scary
+fn rgb_to_yuv(pixel: &image::Rgb<u8>) -> (u8, u8, u8) {
+    let [r, g, b] = pixel.0;
+    let (r, g, b) = (r as f32 / 255., g as f32 / 255., b as f32 / 255.);
+    let y = ((0.299 * r + 0.587 * g + 0.114 * b) * 255.).floor() as u8;
+    let u = ((-0.168736 * r - 0.331264 * g + 0.5 * b) * 255. + 128.).floor() as u8;
+    let v = ((0.5 * r - 0.418688 * g - 0.081312 * b) * 255. + 128.).floor() as u8;
+    (y, u, v)
+}
 
 #[derive(Debug, clap::Parser)]
 #[clap(about, version, author)]
@@ -22,8 +37,9 @@ struct Args {
     fps: Option<u32>,
 }
 
+#[cfg(not(target_os = "linux"))]
 fn main() -> error::HideResult<()> {
-    pretty_env_logger::init();
+    panic!("Not compatible!");
 
     #[cfg(target_os = "macos")]
     nokhwa::nokhwa_initialize(|granted| {
@@ -41,11 +57,18 @@ fn main() -> error::HideResult<()> {
     main_next()
 }
 
+#[cfg(target_os = "linux")]
+fn main() -> error::HideResult<()> {
+    pretty_env_logger::init();
+    main_next()
+}
+
 fn main_next() -> error::HideResult<()> {
     use clap::StructOpt as _;
     let args = Args::parse();
 
-    let devices = nokhwa::query_devices(nokhwa::CaptureAPIBackend::Auto)?;
+    let mut devices = nokhwa::query_devices(nokhwa::CaptureAPIBackend::Auto)?;
+    devices.sort_by(|a, b| a.index().cmp(&b.index()));
 
     if args.list_devices {
         if devices.is_empty() {
@@ -119,24 +142,61 @@ fn main_next() -> error::HideResult<()> {
         .set_camera_format(format)
         .or_else(|_| camera.set_camera_format(compatible_formats[0]))?;
 
+    let (w, h) = (
+        camera.camera_format().resolution().width(),
+        camera.camera_format().resolution().height()
+    );
+
+    let channels = 3u32;
+
     log::info!(
         "Active Camera Format: {}x{}@{}fps",
-        camera.camera_format().resolution().width(),
-        camera.camera_format().resolution().height(),
+        w,
+        h,
         camera.camera_format().frame_rate(),
     );
 
+    let fake_cam_info = match devices.iter().find(|info| info.human_name() == "fake-cam") {
+        Some(info) => info,
+        None => { return Err(HideError::FakeCameraMissing); }
+    };
+
+    let mut fake_camera = v4l::Device::new(fake_cam_info.index())?;
+    v4l::video::Output::set_format(&fake_camera, &v4l::Format::new(w, h, v4l::FourCC::new(&[b'M', b'J', b'P', b'G'])))?;
+    let fake_fmt = v4l::video::Output::format(&fake_camera)?;
+    log::info!("Fake Camera found at index #{}", fake_cam_info.index());
+    log::debug!("Fake camera format: {:?}", std::str::from_utf8(&fake_fmt.fourcc.repr).unwrap());
+
+    let buf_size = camera.min_buffer_size(false);
+    log::debug!("Buffer size: {}", buf_size);
+    let mut frame: Vec<f32> = Vec::with_capacity(buf_size);
+    // let mut yuv_buffer: Vec<u8> = Vec::with_capacity(buf_size);
+
     log::debug!("Loading ML model...");
-    let rvm = rvm::RobustVideoMatting::try_init()?;
+    let mut rvm = rvm::RobustVideoMatting::try_init()?;
 
     camera.open_stream()?;
-
+    let mut jpg_encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut fake_camera, 90);
     loop {
-        let frame = camera.frame()?;
-        rvm.run(frame)?;
-        buf.clear();
+        let buf_u8 = camera.frame()?;
+        let mut blurred_bg = image::imageops::blur(&buf_u8, 12.);
+
+        // Normalize u8 to 0..1 f32 pixels
+        frame.clear();
+        for pix in buf_u8.into_iter() {
+            frame.push(*pix as f32 / 255.);
+        }
+
+        log::debug!("Got camera frame [len = {}]", frame.len());
+
+        let fgr: Vec<u8> = rvm.run(&frame, (channels, w, h))?.into_iter().map(|px| (px * 255.) as u8).collect();
+        let foreground = image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(w, h, fgr).unwrap();
+        use image::GenericImageView as _;
+        image::imageops::overlay(&mut blurred_bg, &foreground.view(0, 0, w, h), 0, 0);
+
+        jpg_encoder.encode_image(&blurred_bg)?;
     }
 
-    camera.stop_stream()?;
-    Ok(())
+    //camera.stop_stream()?;
+    //Ok(())
 }
