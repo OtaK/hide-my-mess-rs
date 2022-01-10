@@ -14,6 +14,12 @@ pub enum HideError {
     // TorchError(#[from] tch::TchError),
     #[error(transparent)]
     Webcam(#[from] nokhwa::NokhwaError),
+    #[error("Cannot get access to cache directory")]
+    CacheDirError,
+    #[error(transparent)]
+    ModelDownloadError(#[from] ureq::Error),
+    #[error(transparent)]
+    ModelUnzipError(#[from] zip::result::ZipError),
     #[error(transparent)]
     Other(#[from] eyre::Report),
 }

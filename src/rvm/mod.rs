@@ -1,3 +1,5 @@
+mod download_rvm;
+
 use crate::error::HideResult;
 use tensorflow as tf;
 
@@ -59,17 +61,34 @@ impl RobustVideoMatting {
     }
 
     #[inline(always)]
-    fn get_input_operation_for_param(&self, signature: &tf::SignatureDef, param: &str) -> HideResult<tf::Operation> {
-        Ok(self.graph.operation_by_name_required(&signature.get_input(param)?.name().name)?)
+    fn get_input_operation_for_param(
+        &self,
+        signature: &tf::SignatureDef,
+        param: &str,
+    ) -> HideResult<tf::Operation> {
+        Ok(self
+            .graph
+            .operation_by_name_required(&signature.get_input(param)?.name().name)?)
     }
 
     #[inline(always)]
-    fn get_output_operation_for_param(&self, signature: &tf::SignatureDef, param: &str) -> HideResult<tf::Operation> {
-        Ok(self.graph.operation_by_name_required(&signature.get_output(param)?.name().name)?)
+    fn get_output_operation_for_param(
+        &self,
+        signature: &tf::SignatureDef,
+        param: &str,
+    ) -> HideResult<tf::Operation> {
+        Ok(self
+            .graph
+            .operation_by_name_required(&signature.get_output(param)?.name().name)?)
     }
 
-    pub fn run(&mut self, frame: &[f32], (channels, width, height): (u32, u32, u32)) -> HideResult<Vec<f32>> {
-        let signature = self.bundle
+    pub fn run(
+        &mut self,
+        frame: &[f32],
+        (channels, width, height): (u32, u32, u32),
+    ) -> HideResult<Vec<f32>> {
+        let signature = self
+            .bundle
             .meta_graph_def()
             .get_signature(tf::DEFAULT_SERVING_SIGNATURE_DEF_KEY)?;
 
@@ -92,8 +111,9 @@ impl RobustVideoMatting {
         let ir4_out = self.get_output_operation_for_param(signature, "r4o")?;
 
         // Intermediate tensors
-        let frame_tensor: tf::Tensor<f32> = tf::Tensor::new(&[1, height as u64, width as u64, channels as u64])
-            .with_values(frame)?;
+        let frame_tensor: tf::Tensor<f32> =
+            tf::Tensor::new(&[1, height as u64, width as u64, channels as u64])
+                .with_values(frame)?;
 
         let dsr_tensor = tf::Tensor::from(Self::auto_downsample_ratio(height, width));
 

@@ -1,6 +1,7 @@
 use crate::error::HideError;
 
 mod error;
+pub use self::error::*;
 
 mod rvm;
 
@@ -74,7 +75,10 @@ fn main_next() -> error::HideResult<()> {
         if devices.is_empty() {
             log::info!("No devices found on the system!");
         } else {
-            log::info!("Found {} device(s) currently connected to this system: ", devices.len());
+            log::info!(
+                "Found {} device(s) currently connected to this system: ",
+                devices.len()
+            );
             for d in devices {
                 log::info!(
                     "Index #{}: {} via [{}]@[{}]",
@@ -98,12 +102,13 @@ fn main_next() -> error::HideResult<()> {
     let camera_index = args.camera_index.unwrap_or_else(|| devices[0].index());
     log::debug!("Selected device index: #{}", camera_index);
 
-    let mut camera = nokhwa::Camera::new(
-        camera_index,
-        None,
-    )?;
+    let mut camera = nokhwa::Camera::new(camera_index, None)?;
 
-    log::info!("Selected camera: #{} - {}", camera.info().index(), camera.info().human_name());
+    log::info!(
+        "Selected camera: #{} - {}",
+        camera.info().index(),
+        camera.info().human_name()
+    );
 
     let mut compatible_formats = camera
         .compatible_camera_formats()?
@@ -144,7 +149,7 @@ fn main_next() -> error::HideResult<()> {
 
     let (w, h) = (
         camera.camera_format().resolution().width(),
-        camera.camera_format().resolution().height()
+        camera.camera_format().resolution().height(),
     );
 
     let channels = 3u32;
@@ -158,14 +163,22 @@ fn main_next() -> error::HideResult<()> {
 
     let fake_cam_info = match devices.iter().find(|info| info.human_name() == "fake-cam") {
         Some(info) => info,
-        None => { return Err(HideError::FakeCameraMissing); }
+        None => {
+            return Err(HideError::FakeCameraMissing);
+        }
     };
 
     let mut fake_camera = v4l::Device::new(fake_cam_info.index())?;
-    v4l::video::Output::set_format(&fake_camera, &v4l::Format::new(w, h, v4l::FourCC::new(&[b'M', b'J', b'P', b'G'])))?;
+    v4l::video::Output::set_format(
+        &fake_camera,
+        &v4l::Format::new(w, h, v4l::FourCC::new(&[b'M', b'J', b'P', b'G'])),
+    )?;
     let fake_fmt = v4l::video::Output::format(&fake_camera)?;
     log::info!("Fake Camera found at index #{}", fake_cam_info.index());
-    log::debug!("Fake camera format: {:?}", std::str::from_utf8(&fake_fmt.fourcc.repr).unwrap());
+    log::debug!(
+        "Fake camera format: {:?}",
+        std::str::from_utf8(&fake_fmt.fourcc.repr).unwrap()
+    );
 
     let buf_size = camera.min_buffer_size(false);
     log::debug!("Buffer size: {}", buf_size);
@@ -189,7 +202,11 @@ fn main_next() -> error::HideResult<()> {
 
         log::debug!("Got camera frame [len = {}]", frame.len());
 
-        let fgr: Vec<u8> = rvm.run(&frame, (channels, w, h))?.into_iter().map(|px| (px * 255.) as u8).collect();
+        let fgr: Vec<u8> = rvm
+            .run(&frame, (channels, w, h))?
+            .into_iter()
+            .map(|px| (px * 255.) as u8)
+            .collect();
         let foreground = image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(w, h, fgr).unwrap();
         use image::GenericImageView as _;
         image::imageops::overlay(&mut blurred_bg, &foreground.view(0, 0, w, h), 0, 0);
