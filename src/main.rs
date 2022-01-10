@@ -171,7 +171,7 @@ fn main_next() -> error::HideResult<()> {
     let mut fake_camera = v4l::Device::new(fake_cam_info.index())?;
     v4l::video::Output::set_format(
         &fake_camera,
-        &v4l::Format::new(w, h, v4l::FourCC::new(&[b'M', b'J', b'P', b'G'])),
+        &v4l::Format::new(w, h, v4l::FourCC::new(b"MJPG")),
     )?;
     let fake_fmt = v4l::video::Output::format(&fake_camera)?;
     log::info!("Fake Camera found at index #{}", fake_cam_info.index());
@@ -196,9 +196,10 @@ fn main_next() -> error::HideResult<()> {
 
         // Normalize u8 to 0..1 f32 pixels
         frame.clear();
-        for pix in buf_u8.into_iter() {
-            frame.push(*pix as f32 / 255.);
-        }
+        frame = buf_u8.into_iter().map(|pix| *pix as f32 / 255.).collect();
+        // for pix in buf_u8.into_iter() {
+        //     frame.push(*pix as f32 / 255.);
+        // }
 
         log::debug!("Got camera frame [len = {}]", frame.len());
 
@@ -207,6 +208,7 @@ fn main_next() -> error::HideResult<()> {
             .into_iter()
             .map(|px| (px * 255.) as u8)
             .collect();
+
         let foreground = image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(w, h, fgr).unwrap();
         use image::GenericImageView as _;
         image::imageops::overlay(&mut blurred_bg, &foreground.view(0, 0, w, h), 0, 0);
