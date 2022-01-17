@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use crate::{HideError, HideResult};
 
 const CACHE_DIR_NAME: &str = "hide-my-mess";
@@ -12,16 +11,43 @@ pub enum RvmModelKind {
     Resnet50,
 }
 
+impl Default for RvmModelKind {
+    fn default() -> Self {
+        Self::MobileNetV3
+    }
+}
+
+impl RvmModelKind {
+    fn to_filename(&self) -> &str {
+        match self {
+            RvmModelKind::MobileNetV3 => "rvm_mobilenetv3_tf",
+            RvmModelKind::Resnet50 => "rvm_resnet50_tf",
+        }
+    }
+}
+
 impl std::fmt::Display for RvmModelKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "{}",
             match self {
-                RvmModelKind::MobileNetV3 => "rvm_mobilenetv3_tf",
-                RvmModelKind::Resnet50 => "rvm_resnet50_tf",
+                RvmModelKind::MobileNetV3 => "mobilenetv3",
+                RvmModelKind::Resnet50 => "resnet50",
             }
         )
+    }
+}
+
+impl std::str::FromStr for RvmModelKind {
+    type Err = HideError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "mobilenetv3" => Self::MobileNetV3,
+            "resnet50" => Self::Resnet50,
+            i => return Err(HideError::InvalidModel(i.to_string())),
+        })
     }
 }
 
@@ -31,54 +57,39 @@ pub fn download_rvm_model(kind: RvmModelKind) -> HideResult<std::path::PathBuf> 
         .join(CACHE_DIR_NAME)
         .join("models");
 
-    let model_folder_name = kind.to_string();
     let model_folder = target_dir.join(kind.to_string());
-    std::fs::create_dir_all(&model_folder)?;
+
+    if model_folder.exists() {
+        return Ok(model_folder);
+    }
+
+    let model_folder_name = kind.to_filename();
+    std::fs::create_dir_all(&target_dir)?;
 
     let download_url = format!(
         "{}/releases/download/{}/{}.zip",
         REPOSITORY_URL, TARGET_VERSION, model_folder_name
     );
 
-    let res = ureq::get(&download_url).call()?;
+    let res = attohttpc::get(&download_url).send()?;
 
-    let progress_bar =
-        if let Some(Ok(length)) = res.header("content-length").map(|len| len.parse::<u64>()) {
-            indicatif::ProgressBar::new(length * 2) // we multiply by 2 because we count read & write as progress
-        } else {
-            indicatif::ProgressBar::new_spinner() // No content length so...we just spin
-        };
+    let progress_bar = indicatif::ProgressBar::new_spinner();
+    progress_bar.set_message(format!("Downloading model at {}...", download_url));
 
-    progress_bar.set_message(format!("Downloading {}...", download_url));
-
-    // 8KB buffer
-    let mut buf = Vec::with_capacity(8192);
-    let zipfile_path = model_folder.join(format!("{}.zip", model_folder_name));
-    let mut file = std::fs::File::create(&zipfile_path)?;
-
-    let mut reader = res.into_reader();
-    // Download the file into the zip file
-    loop {
-        use std::io::{Read as _, Write as _};
-        reader.read_exact(&mut buf)?;
-        let len = buf.len();
-        progress_bar.inc(len as _);
-        file.write_all(&buf)?;
-        progress_bar.inc(len as _);
-        if len < buf.capacity() {
-            progress_bar.finish();
-            break;
-        }
-        buf.clear();
-    }
+    let zipfile_path = target_dir.join(format!("{}.zip", model_folder_name));
+    let file = std::fs::File::create(&zipfile_path)?;
+    // Pipe the download to the file
+    res.write_to(file)?;
 
     let zip_reader = std::fs::File::open(&zipfile_path)?;
     // Unzip that bad boy
     let mut zip = zip::ZipArchive::new(zip_reader)?;
-    zip.extract(&model_folder)?;
+    zip.extract(&target_dir)?;
 
     // Remove zip file
     std::fs::remove_file(&zipfile_path)?;
+
+    progress_bar.finish();
 
     Ok(model_folder)
 }
@@ -89,12 +100,14 @@ mod tests {
 
     #[test]
     fn can_unzip_mobilenet_model() {
+        let _ = pretty_env_logger::try_init();
         let path = download_rvm_model(RvmModelKind::MobileNetV3).unwrap();
         assert!(path.exists());
     }
 
     #[test]
     fn can_unzip_resnet_model() {
+        let _ = pretty_env_logger::try_init();
         let path = download_rvm_model(RvmModelKind::Resnet50).unwrap();
         assert!(path.exists());
     }

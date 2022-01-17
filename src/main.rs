@@ -21,21 +21,25 @@ fn rgb_to_yuv(pixel: &image::Rgb<u8>) -> (u8, u8, u8) {
 #[clap(about, version, author)]
 /// Virtual camera that blurs your background
 struct Args {
-    #[clap(short, long = "list")]
     /// Lists video capture devices present on the system along with their details
+    #[clap(short, long = "list")]
     list_devices: bool,
-    #[clap(long)]
     /// Choose a video capture device index manually, in case you have several connected
-    camera_index: Option<usize>,
-    #[clap(short, long)]
-    /// Desired frame capture width. If not available, it'll fallback to the highest mode detected
-    width: Option<u32>,
-    #[clap(short, long)]
-    /// Desired frame capture height. If not available, it'll fallback to the highest mode detected
-    height: Option<u32>,
     #[clap(long)]
+    camera_index: Option<usize>,
+    /// Desired frame capture width. If not available, it'll fallback to the highest mode detected
+    #[clap(short, long)]
+    width: Option<u32>,
+    /// Desired frame capture height. If not available, it'll fallback to the highest mode detected
+    #[clap(short, long)]
+    height: Option<u32>,
     /// Desired capture framerate. If not available, it'll fallback to the highest mode detected
+    #[clap(long)]
     fps: Option<u32>,
+    /// Used variant of RobustVideoMatting. resnet is more accurate & faster but heavier, mobilenet is lighter
+    /// The two possible choices are `resnet50` and `mobilenetv3`
+    #[clap(long, default_value_t)]
+    model: rvm::RvmModelKind,
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -169,11 +173,10 @@ fn main_next() -> error::HideResult<()> {
     };
 
     let mut fake_camera = v4l::Device::new(fake_cam_info.index())?;
-    v4l::video::Output::set_format(
-        &fake_camera,
-        &v4l::Format::new(w, h, v4l::FourCC::new(b"MJPG")),
-    )?;
-    let fake_fmt = v4l::video::Output::format(&fake_camera)?;
+    use v4l::video::Output as _;
+    let mut format = v4l::Format::new(w, h, v4l::FourCC::new(b"MJPG"));
+    format.colorspace = v4l::format::Colorspace::JPEG;
+    let fake_fmt = fake_camera.set_format(&format)?;
     log::info!("Fake Camera found at index #{}", fake_cam_info.index());
     log::debug!(
         "Fake camera format: {:?}",
@@ -186,11 +189,18 @@ fn main_next() -> error::HideResult<()> {
     // let mut yuv_buffer: Vec<u8> = Vec::with_capacity(buf_size);
 
     log::debug!("Loading ML model...");
-    let mut rvm = rvm::RobustVideoMatting::try_init()?;
+    let mut rvm = rvm::RobustVideoMatting::try_init(args.model)?;
 
     camera.open_stream()?;
-    let mut jpg_encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut fake_camera, 90);
+    // let mut jpg_encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut fake_camera, 90);
+
+    // Warmup
+    for _ in 0..5 {
+        let _ = camera.frame()?;
+    }
+
     loop {
+        let jpg_encoder = jpeg_encoder::Encoder::new(&mut fake_camera, 90);
         let buf_u8 = camera.frame()?;
         let mut blurred_bg = image::imageops::blur(&buf_u8, 12.);
 
@@ -213,7 +223,12 @@ fn main_next() -> error::HideResult<()> {
         use image::GenericImageView as _;
         image::imageops::overlay(&mut blurred_bg, &foreground.view(0, 0, w, h), 0, 0);
 
-        jpg_encoder.encode_image(&blurred_bg)?;
+        jpg_encoder.encode(
+            &blurred_bg,
+            w as u16,
+            h as u16,
+            jpeg_encoder::ColorType::Rgb,
+        )?;
     }
 
     //camera.stop_stream()?;

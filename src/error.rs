@@ -7,6 +7,8 @@ pub enum HideError {
     #[error(transparent)]
     ImageError(#[from] image::ImageError),
     #[error(transparent)]
+    JpegEncoderError(#[from] jpeg_encoder::EncodingError),
+    #[error(transparent)]
     IntError(#[from] std::num::TryFromIntError),
     #[error(transparent)]
     TensorflowError(#[from] tensorflow::Status),
@@ -17,7 +19,9 @@ pub enum HideError {
     #[error("Cannot get access to cache directory")]
     CacheDirError,
     #[error(transparent)]
-    ModelDownloadError(#[from] ureq::Error),
+    ModelDownloadError(#[from] attohttpc::Error),
+    #[error("Invalid selected model: {0}. Possible choices are `resnet50` or `mobilenetv3`")]
+    InvalidModel(String),
     #[error(transparent)]
     ModelUnzipError(#[from] zip::result::ZipError),
     #[error(transparent)]
