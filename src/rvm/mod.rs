@@ -192,6 +192,13 @@ impl RobustVideoMatting {
         log::debug!("pha: {:#?}", pha);
         log::debug!("state: {:#?}", self.state);
 
-        Ok((&*fgr).into())
+        let res: Vec<f32> = fgr
+            .chunks_exact(3)
+            .into_iter()
+            .zip(pha.into_iter())
+            .flat_map(|(rgb, a)| [rgb[0], rgb[1], rgb[2], *a])
+            .collect();
+
+        Ok(res)
     }
 }

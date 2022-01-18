@@ -7,8 +7,6 @@ pub enum HideError {
     #[error(transparent)]
     ImageError(#[from] image::ImageError),
     #[error(transparent)]
-    JpegEncoderError(#[from] jpeg_encoder::EncodingError),
-    #[error(transparent)]
     IntError(#[from] std::num::TryFromIntError),
     #[error(transparent)]
     TensorflowError(#[from] tensorflow::Status),

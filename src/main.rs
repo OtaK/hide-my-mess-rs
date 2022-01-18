@@ -174,8 +174,7 @@ fn main_next() -> error::HideResult<()> {
 
     let mut fake_camera = v4l::Device::new(fake_cam_info.index())?;
     use v4l::video::Output as _;
-    let mut format = v4l::Format::new(w, h, v4l::FourCC::new(b"MJPG"));
-    format.colorspace = v4l::format::Colorspace::JPEG;
+    let format = v4l::Format::new(w, h, v4l::FourCC::new(b"RGB3"));
     let fake_fmt = fake_camera.set_format(&format)?;
     log::info!("Fake Camera found at index #{}", fake_cam_info.index());
     log::debug!(
@@ -192,7 +191,6 @@ fn main_next() -> error::HideResult<()> {
     let mut rvm = rvm::RobustVideoMatting::try_init(args.model)?;
 
     camera.open_stream()?;
-    // let mut jpg_encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut fake_camera, 90);
 
     // Warmup
     for _ in 0..5 {
@@ -200,16 +198,16 @@ fn main_next() -> error::HideResult<()> {
     }
 
     loop {
-        let jpg_encoder = jpeg_encoder::Encoder::new(&mut fake_camera, 90);
         let buf_u8 = camera.frame()?;
-        let mut blurred_bg = image::imageops::blur(&buf_u8, 12.);
+        let result = image::ImageBuffer::from_pixel(w, h, [0u8, 255, 0, 1].into());
+        let mut result = image::DynamicImage::ImageRgba8(result);
+        // let mut blurred_bg = image::imageops::blur(&buf_u8, 12.);
 
         // Normalize u8 to 0..1 f32 pixels
         frame.clear();
-        frame = buf_u8.into_iter().map(|pix| *pix as f32 / 255.).collect();
-        // for pix in buf_u8.into_iter() {
-        //     frame.push(*pix as f32 / 255.);
-        // }
+        for pix in buf_u8.into_iter() {
+            frame.push(*pix as f32 / 255.);
+        }
 
         log::debug!("Got camera frame [len = {}]", frame.len());
 
@@ -219,16 +217,13 @@ fn main_next() -> error::HideResult<()> {
             .map(|px| (px * 255.) as u8)
             .collect();
 
-        let foreground = image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(w, h, fgr).unwrap();
-        use image::GenericImageView as _;
-        image::imageops::overlay(&mut blurred_bg, &foreground.view(0, 0, w, h), 0, 0);
+        let foreground = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(w, h, fgr).unwrap();
 
-        jpg_encoder.encode(
-            &blurred_bg,
-            w as u16,
-            h as u16,
-            jpeg_encoder::ColorType::Rgb,
-        )?;
+        use image::GenericImageView as _;
+        image::imageops::overlay(&mut result, &foreground.view(0, 0, w, h), 0, 0);
+
+        use std::io::Write as _;
+        fake_camera.write_all(&result.to_rgb8())?;
     }
 
     //camera.stop_stream()?;

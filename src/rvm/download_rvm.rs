@@ -57,13 +57,13 @@ pub fn download_rvm_model(kind: RvmModelKind) -> HideResult<std::path::PathBuf> 
         .join(CACHE_DIR_NAME)
         .join("models");
 
-    let model_folder = target_dir.join(kind.to_string());
+    let model_folder_name = kind.to_filename();
+    let model_folder = target_dir.join(model_folder_name);
 
     if model_folder.exists() {
         return Ok(model_folder);
     }
 
-    let model_folder_name = kind.to_filename();
     std::fs::create_dir_all(&target_dir)?;
 
     let download_url = format!(
