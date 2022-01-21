@@ -923,7 +923,7 @@ dependencies = [
 [[package]]
 name = "nokhwa"
 version = "0.10.0"
-source = "git+https://github.com/otak/nokhwa?branch=otak/buff-buffers#723cb6c88ef08f8af494a9a284fabc5131c2882a"
+source = "git+https://github.com/otak/nokhwa?branch=otak/buff-buffers#36d94e493fc9b9ccb1f12cd7ad8b0b6cadd8f8dc"
 dependencies = [
  "flume",
  "image",
