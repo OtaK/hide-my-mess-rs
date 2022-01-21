@@ -143,8 +143,11 @@ impl RobustVideoMatting {
     }
 
     fn normalize_frame(&mut self, frame: &[u8], width: usize, height: usize) {
-        self.fb.reserve_exact(width * height * SUPPORTED_CHANNELS);
-        self.fb.clear();
+        let buffer_size = width * height * SUPPORTED_CHANNELS;
+        self.fb.reserve_exact(buffer_size);
+        if self.fb.len() < self.fb.capacity() {
+            self.fb.resize(buffer_size, 0.);
+        }
         let frame_normalized = frame.chunks_exact(4).flat_map(|rgba| {
             [
                 rgba[0] as f32 / 255.,
@@ -152,12 +155,10 @@ impl RobustVideoMatting {
                 rgba[2] as f32 / 255.,
             ]
         });
-        for np in frame_normalized {
-            self.fb.push(np);
+
+        for (fbn, np) in self.fb.iter_mut().zip(frame_normalized) {
+            *fbn = np;
         }
-        // for (fbn, np) in self.fb.iter_mut().zip(frame_normalized) {
-        //     *fbn = np;
-        // }
     }
 
     pub fn infer(&mut self, frame: &mut [u8], (width, height): (u32, u32)) -> HideResult<()> {

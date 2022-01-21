@@ -24,6 +24,16 @@ struct Args {
     /// Desired capture framerate. If not available, it'll fallback to the highest mode detected
     #[clap(long)]
     fps: Option<u32>,
+    /// Replaces the inferred background by the provided image path
+    #[clap(long, long = "bg")]
+    background: Option<String>,
+    /// Dynamic background blurring. Be wary that this has a big cost in performance
+    /// Is also incompatible with the --background option.
+    #[clap(long = "blur")]
+    dynamic_background_blur: bool,
+    /// Displays current rendering performance
+    #[clap(long = "debug-fps")]
+    display_fps: bool,
     /// Used variant of RobustVideoMatting. resnet is more accurate & faster but heavier, mobilenet is lighter
     /// The two possible choices are `resnet50` and `mobilenetv3`
     #[clap(long, default_value_t)]
@@ -52,6 +62,14 @@ fn main() -> error::HideResult<()> {
 
 #[cfg(target_os = "linux")]
 fn main() -> error::HideResult<()> {
+    let log_setting = if let Ok(log_setting) = std::env::var("RUST_LOG") {
+        format!("info,{log_setting}")
+    } else {
+        "info".to_string()
+    };
+    std::env::set_var("RUST_LOG", log_setting);
+    std::env::set_var("TF_CPP_MIN_LOG_LEVEL", "3");
+
     pretty_env_logger::init();
     main_next()
 }
@@ -120,7 +138,7 @@ fn main_next() -> error::HideResult<()> {
         .filter(|(_res, fps_list)| fps_list.iter().any(|f| *f >= 24))
         .collect::<Vec<(nokhwa::Resolution, Vec<u32>)>>();
 
-    compatible_formats.sort_by(|a, b| b.0.cmp(&a.0));
+    compatible_formats.sort_by(|a, b| a.0.cmp(&b.0));
 
     if compatible_formats.is_empty() {
         log::error!("Your capture device somehow supports NO capture formats! :(");
@@ -135,7 +153,7 @@ fn main_next() -> error::HideResult<()> {
         resolution.height_y = h;
     }
 
-    fps.sort_by(|a, b| b.cmp(a));
+    fps.sort_by(|a, b| a.cmp(b));
 
     format.set_resolution(resolution);
     if let Some(fps) = args.fps {
@@ -195,30 +213,42 @@ fn main_next() -> error::HideResult<()> {
         let _ = camera.frame()?;
     }
 
-    let background_pixel = [127, 212, 255, 255].into();
-    let result = image::ImageBuffer::from_pixel(w, h, background_pixel);
-    let mut result = image::DynamicImage::ImageRgba8(result);
+    let original_result = if let Some(bg_file_path) = args.background {
+        image::DynamicImage::ImageRgba8(image::open(bg_file_path)?.into_rgba8()).resize_exact(
+            w,
+            h,
+            image::imageops::FilterType::Lanczos3,
+        )
+    } else {
+        let background_pixel = [127, 212, 255, 255].into();
+        image::DynamicImage::ImageRgba8(image::ImageBuffer::from_pixel(w, h, background_pixel))
+    };
+
+    let mut result = original_result.clone();
+
+    let mut fps_counter = fps_counter::FPSCounter::new();
 
     loop {
         camera.frame_to_buffer(&mut frame, true)?;
 
-        // let mut blurred_bg = image::imageops::blur(&buf_u8, 12.);
+        if args.dynamic_background_blur {
+            result = image::DynamicImage::ImageRgba8(image::imageops::blur(&frame, 12.));
+        }
 
         log::debug!("Got camera frame [len = {}]", frame.len());
 
         rvm.infer(&mut frame, (w, h))?;
 
-        use image::GenericImageView as _;
-        image::imageops::overlay(&mut result, &frame.view(0, 0, w, h), 0, 0);
+        image::imageops::overlay(&mut result, &frame, 0, 0);
 
         use std::io::Write as _;
         fake_camera.write_all(&result.to_rgb8())?;
-        // Reset result
-        for pixel in result.as_mut_rgba8().unwrap().enumerate_pixels_mut() {
-            *pixel.2 = background_pixel;
+        if args.display_fps {
+            log::info!("current FPS: {}", fps_counter.tick());
         }
 
-        frame.fill(0);
+        use image::GenericImage as _;
+        result.copy_from(&original_result, 0, 0)?;
     }
 
     //camera.stop_stream()?;
