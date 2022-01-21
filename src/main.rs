@@ -5,18 +5,6 @@ pub use self::error::*;
 
 mod rvm;
 
-#[inline(always)]
-#[allow(dead_code)]
-// Don't look it's scary
-fn rgb_to_yuv(pixel: &image::Rgb<u8>) -> (u8, u8, u8) {
-    let [r, g, b] = pixel.0;
-    let (r, g, b) = (r as f32 / 255., g as f32 / 255., b as f32 / 255.);
-    let y = ((0.299 * r + 0.587 * g + 0.114 * b) * 255.).floor() as u8;
-    let u = ((-0.168736 * r - 0.331264 * g + 0.5 * b) * 255. + 128.).floor() as u8;
-    let v = ((0.5 * r - 0.418688 * g - 0.081312 * b) * 255. + 128.).floor() as u8;
-    (y, u, v)
-}
-
 #[derive(Debug, clap::Parser)]
 #[clap(about, version, author)]
 /// Virtual camera that blurs your background
@@ -68,12 +56,18 @@ fn main() -> error::HideResult<()> {
     main_next()
 }
 
+#[inline(always)]
 fn main_next() -> error::HideResult<()> {
     use clap::StructOpt as _;
     let args = Args::parse();
 
     let mut devices = nokhwa::query_devices(nokhwa::CaptureAPIBackend::Auto)?;
-    devices.sort_by(|a, b| a.index().cmp(&b.index()));
+    devices.sort_by(|a, b| {
+        a.index()
+            .as_index()
+            .unwrap()
+            .cmp(&b.index().as_index().unwrap())
+    });
 
     if args.list_devices {
         if devices.is_empty() {
@@ -97,16 +91,22 @@ fn main_next() -> error::HideResult<()> {
         return Ok(());
     }
 
-    log::debug!("devices found: {:#?}", devices);
+    log::debug!("devices found: {devices:#?}");
     if devices.is_empty() {
         log::error!("No devices found on the system!");
         return Ok(());
     }
 
-    let camera_index = args.camera_index.unwrap_or_else(|| devices[0].index());
-    log::debug!("Selected device index: #{}", camera_index);
+    let camera_index = args
+        .camera_index
+        .map(|idx| nokhwa::CameraIndex::Index(idx as u32))
+        .unwrap_or_else(|| devices[0].index().clone());
 
-    let mut camera = nokhwa::Camera::new(camera_index, None)?;
+    log::debug!("Selected device index: #{camera_index}");
+
+    let mut camera = nokhwa::Camera::new(&camera_index, None)?;
+
+    let mut format = camera.camera_format();
 
     log::info!(
         "Selected camera: #{} - {}",
@@ -115,29 +115,33 @@ fn main_next() -> error::HideResult<()> {
     );
 
     let mut compatible_formats = camera
-        .compatible_camera_formats()?
+        .compatible_list_by_resolution(nokhwa::FrameFormat::MJPEG)?
         .into_iter()
-        .filter(|f| f.format() == nokhwa::FrameFormat::MJPEG && f.frame_rate() >= 24)
-        .collect::<Vec<nokhwa::CameraFormat>>();
+        .filter(|(_res, fps_list)| fps_list.iter().any(|f| *f >= 24))
+        .collect::<Vec<(nokhwa::Resolution, Vec<u32>)>>();
 
-    compatible_formats.sort_by(|a, b| b.resolution().cmp(&a.resolution()));
+    compatible_formats.sort_by(|a, b| b.0.cmp(&a.0));
 
     if compatible_formats.is_empty() {
         log::error!("Your capture device somehow supports NO capture formats! :(");
         return Ok(());
     }
 
-    let mut format = compatible_formats[0];
-    let mut resolution = format.resolution();
+    let (mut resolution, mut fps) = compatible_formats.pop().unwrap();
     if let Some(w) = args.width {
         resolution.width_x = w;
     }
     if let Some(h) = args.height {
         resolution.height_y = h;
     }
+
+    fps.sort_by(|a, b| b.cmp(a));
+
     format.set_resolution(resolution);
     if let Some(fps) = args.fps {
         format.set_frame_rate(fps);
+    } else {
+        format.set_frame_rate(fps.pop().unwrap())
     }
 
     log::info!(
@@ -147,21 +151,15 @@ fn main_next() -> error::HideResult<()> {
         format.frame_rate()
     );
 
-    camera
-        .set_camera_format(format)
-        .or_else(|_| camera.set_camera_format(compatible_formats[0]))?;
+    camera.set_camera_format(format)?;
 
     let (w, h) = (
         camera.camera_format().resolution().width(),
         camera.camera_format().resolution().height(),
     );
 
-    let channels = 3u32;
-
     log::info!(
-        "Active Camera Format: {}x{}@{}fps",
-        w,
-        h,
+        "Active Camera Format: {w}x{h}@{}fps",
         camera.camera_format().frame_rate(),
     );
 
@@ -172,7 +170,7 @@ fn main_next() -> error::HideResult<()> {
         }
     };
 
-    let mut fake_camera = v4l::Device::new(fake_cam_info.index())?;
+    let mut fake_camera = v4l::Device::new(fake_cam_info.index().as_index().unwrap() as usize)?;
     use v4l::video::Output as _;
     let format = v4l::Format::new(w, h, v4l::FourCC::new(b"RGB3"));
     let fake_fmt = fake_camera.set_format(&format)?;
@@ -182,12 +180,12 @@ fn main_next() -> error::HideResult<()> {
         std::str::from_utf8(&fake_fmt.fourcc.repr).unwrap()
     );
 
-    let buf_size = camera.min_buffer_size(false);
-    log::debug!("Buffer size: {}", buf_size);
-    let mut frame: Vec<f32> = Vec::with_capacity(buf_size);
-    // let mut yuv_buffer: Vec<u8> = Vec::with_capacity(buf_size);
+    let buf_size = camera.min_buffer_size(true);
+    log::debug!("Buffer size: {buf_size}");
+    let mut frame =
+        image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(w, h, vec![0; buf_size]).unwrap();
 
-    log::debug!("Loading ML model...");
+    log::info!("Loading ML Inference model...");
     let mut rvm = rvm::RobustVideoMatting::try_init(args.model)?;
 
     camera.open_stream()?;
@@ -197,33 +195,30 @@ fn main_next() -> error::HideResult<()> {
         let _ = camera.frame()?;
     }
 
-    loop {
-        let buf_u8 = camera.frame()?;
-        let result = image::ImageBuffer::from_pixel(w, h, [0u8, 255, 0, 1].into());
-        let mut result = image::DynamicImage::ImageRgba8(result);
-        // let mut blurred_bg = image::imageops::blur(&buf_u8, 12.);
+    let background_pixel = [127, 212, 255, 255].into();
+    let result = image::ImageBuffer::from_pixel(w, h, background_pixel);
+    let mut result = image::DynamicImage::ImageRgba8(result);
 
-        // Normalize u8 to 0..1 f32 pixels
-        frame.clear();
-        for pix in buf_u8.into_iter() {
-            frame.push(*pix as f32 / 255.);
-        }
+    loop {
+        camera.frame_to_buffer(&mut frame, true)?;
+
+        // let mut blurred_bg = image::imageops::blur(&buf_u8, 12.);
 
         log::debug!("Got camera frame [len = {}]", frame.len());
 
-        let fgr: Vec<u8> = rvm
-            .run(&frame, (channels, w, h))?
-            .into_iter()
-            .map(|px| (px * 255.) as u8)
-            .collect();
-
-        let foreground = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(w, h, fgr).unwrap();
+        rvm.infer(&mut frame, (w, h))?;
 
         use image::GenericImageView as _;
-        image::imageops::overlay(&mut result, &foreground.view(0, 0, w, h), 0, 0);
+        image::imageops::overlay(&mut result, &frame.view(0, 0, w, h), 0, 0);
 
         use std::io::Write as _;
         fake_camera.write_all(&result.to_rgb8())?;
+        // Reset result
+        for pixel in result.as_mut_rgba8().unwrap().enumerate_pixels_mut() {
+            *pixel.2 = background_pixel;
+        }
+
+        frame.fill(0);
     }
 
     //camera.stop_stream()?;

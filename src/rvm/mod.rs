@@ -95,12 +95,15 @@ impl InitialRecurrentState {
     }
 }
 
+const SUPPORTED_CHANNELS: usize = 3;
+
 #[derive(Debug)]
 pub struct RobustVideoMatting {
     #[allow(dead_code)]
     graph: tf::Graph,
     bundle: tf::SavedModelBundle,
     state: InitialRecurrentState,
+    fb: Vec<f32>,
     args: RvmArgs,
 }
 
@@ -124,6 +127,7 @@ impl RobustVideoMatting {
             graph,
             bundle,
             state,
+            fb: vec![],
             args,
         })
     }
@@ -132,21 +136,37 @@ impl RobustVideoMatting {
     fn auto_downsample_ratio(height: u32, width: u32) -> f32 {
         let higher_res = std::cmp::max(height, width);
         if higher_res >= 512 {
-            512. / higher_res as f32
+            512. / (higher_res as f32 * 1.06)
         } else {
             1.
         }
     }
 
-    pub fn run(
-        &mut self,
-        frame: &[f32],
-        (channels, width, height): (u32, u32, u32),
-    ) -> HideResult<Vec<f32>> {
+    fn normalize_frame(&mut self, frame: &[u8], width: usize, height: usize) {
+        self.fb.reserve_exact(width * height * SUPPORTED_CHANNELS);
+        self.fb.clear();
+        let frame_normalized = frame.chunks_exact(4).flat_map(|rgba| {
+            [
+                rgba[0] as f32 / 255.,
+                rgba[1] as f32 / 255.,
+                rgba[2] as f32 / 255.,
+            ]
+        });
+        for np in frame_normalized {
+            self.fb.push(np);
+        }
+        // for (fbn, np) in self.fb.iter_mut().zip(frame_normalized) {
+        //     *fbn = np;
+        // }
+    }
+
+    pub fn infer(&mut self, frame: &mut [u8], (width, height): (u32, u32)) -> HideResult<()> {
+        self.normalize_frame(frame, width as usize, height as usize);
+
         // Intermediate tensors
         let frame_tensor: tf::Tensor<f32> =
-            tf::Tensor::new(&[1, height as u64, width as u64, channels as u64])
-                .with_values(frame)?;
+            tf::Tensor::new(&[1, height as u64, width as u64, SUPPORTED_CHANNELS as u64])
+                .with_values(&self.fb)?;
 
         let dsr_tensor = tf::Tensor::from(Self::auto_downsample_ratio(height, width));
 
@@ -192,13 +212,23 @@ impl RobustVideoMatting {
         log::debug!("pha: {:#?}", pha);
         log::debug!("state: {:#?}", self.state);
 
-        let res: Vec<f32> = fgr
-            .chunks_exact(3)
+        let infer_iter = fgr
+            .chunks_exact(SUPPORTED_CHANNELS)
             .into_iter()
             .zip(pha.into_iter())
-            .flat_map(|(rgb, a)| [rgb[0], rgb[1], rgb[2], *a])
-            .collect();
+            .flat_map(|(rgb, a)| {
+                [
+                    (rgb[0] * 255.) as u8,
+                    (rgb[1] * 255.) as u8,
+                    (rgb[2] * 255.) as u8,
+                    (*a * 255.) as u8,
+                ]
+            });
 
-        Ok(res)
+        for (frame_px, infer_px) in frame.iter_mut().zip(infer_iter) {
+            *frame_px = infer_px;
+        }
+
+        Ok(())
     }
 }

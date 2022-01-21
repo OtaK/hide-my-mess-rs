@@ -15,13 +15,17 @@ log = "0.4"
 pretty_env_logger = "0.4"
 tensorflow = "0.17"
 clap = { version = "3.0", features = ["derive"] }
-nokhwa = { version = "0.9", features = ["input-v4l"] }
+nokhwa = { version = "0.10", features = ["input-v4l"] }
 image = "0.23"
 v4l = "0.12"
 dirs = "4.0"
 indicatif = "0.16"
 zip = "0.5"
 attohttpc = "0.18"
+
+[patch.crates-io.nokhwa]
+git = "https://github.com/otak/nokhwa"
+branch = "otak/buff-buffers"
 
 # [dependencies.nokhwa]
 # version = "0.9"
