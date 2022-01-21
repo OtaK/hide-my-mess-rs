@@ -31,3 +31,6 @@ branch = "otak/buff-buffers"
 # [dependencies.nokhwa]
 # version = "0.9"
 # features = ["input-v4l", "input-msmf", "input-avfoundation"]
+
+[profile.release]
+lto = true

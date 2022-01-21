@@ -229,6 +229,8 @@ fn main_next() -> error::HideResult<()> {
     let mut fps_counter = fps_counter::FPSCounter::new();
 
     loop {
+        // FIXME: Investigate the performance issues with nokhwa.
+        // FIXME: 16 fps on a 5950X & RTX 3080 is NOT okay!
         camera.frame_to_buffer(&mut frame, true)?;
 
         if args.dynamic_background_blur {
@@ -250,7 +252,4 @@ fn main_next() -> error::HideResult<()> {
         use image::GenericImage as _;
         result.copy_from(&original_result, 0, 0)?;
     }
-
-    //camera.stop_stream()?;
-    //Ok(())
 }
