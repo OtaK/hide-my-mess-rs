@@ -31,9 +31,6 @@ struct Args {
     /// Is also incompatible with the --background option.
     #[clap(long = "blur")]
     dynamic_background_blur: bool,
-    /// Displays current rendering performance
-    #[clap(long = "debug-fps")]
-    display_fps: bool,
     /// Used variant of RobustVideoMatting. resnet is more accurate & faster but heavier, mobilenet is lighter
     /// The two possible choices are `resnet50` and `mobilenetv3`
     #[clap(long, default_value_t)]
@@ -191,6 +188,8 @@ fn main_next() -> error::HideResult<()> {
     let mut fake_camera = v4l::Device::new(fake_cam_info.index().as_index().unwrap() as usize)?;
     use v4l::video::Output as _;
     let format = v4l::Format::new(w, h, v4l::FourCC::new(b"RGB3"));
+    // TODO: Use the following line once v4l2loopback supports RGBA
+    // let format = v4l::Format::new(w, h, v4l::FourCC::new(b"AB24"));
     let fake_fmt = fake_camera.set_format(&format)?;
     log::info!("Fake Camera found at index #{}", fake_cam_info.index());
     log::debug!(
@@ -213,7 +212,7 @@ fn main_next() -> error::HideResult<()> {
         let _ = camera.frame()?;
     }
 
-    let original_result = if let Some(bg_file_path) = args.background {
+    let background = if let Some(bg_file_path) = args.background {
         image::DynamicImage::ImageRgba8(image::open(bg_file_path)?.into_rgba8()).resize_exact(
             w,
             h,
@@ -224,32 +223,27 @@ fn main_next() -> error::HideResult<()> {
         image::DynamicImage::ImageRgba8(image::ImageBuffer::from_pixel(w, h, background_pixel))
     };
 
-    let mut result = original_result.clone();
-
-    let mut fps_counter = fps_counter::FPSCounter::new();
+    let mut canvas = background.clone();
 
     loop {
-        // FIXME: Investigate the performance issues with nokhwa.
-        // FIXME: 16 fps on a 5950X & RTX 3080 is NOT okay!
         camera.frame_to_buffer(&mut frame, true)?;
 
+        use image::GenericImage as _;
         if args.dynamic_background_blur {
-            result = image::DynamicImage::ImageRgba8(image::imageops::blur(&frame, 12.));
+            canvas.copy_from(&image::imageops::blur(&frame, 12.), 0, 0)?;
+        } else {
+            canvas.copy_from(&background, 0, 0)?;
         }
 
-        log::debug!("Got camera frame [len = {}]", frame.len());
+        // log::debug!("Got camera frame [len = {}]", frame.len());
 
         rvm.infer(&mut frame, (w, h))?;
 
-        image::imageops::overlay(&mut result, &frame, 0, 0);
+        image::imageops::overlay(&mut canvas, &frame, 0, 0);
 
         use std::io::Write as _;
-        fake_camera.write_all(&result.to_rgb8())?;
-        if args.display_fps {
-            log::info!("current FPS: {}", fps_counter.tick());
-        }
-
-        use image::GenericImage as _;
-        result.copy_from(&original_result, 0, 0)?;
+        fake_camera.write_all(&canvas.to_rgb8())?;
+        // TODO: Use the following line once v4l2loopback supports RGBA
+        // fake_camera.write_all(&result.as_rgba8().unwrap())?;
     }
 }

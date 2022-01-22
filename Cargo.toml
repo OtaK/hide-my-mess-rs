@@ -22,9 +22,9 @@ dirs = "4.0"
 indicatif = "0.16"
 zip = "0.5"
 attohttpc = "0.18"
-fps_counter = "2.0"
 
 [patch.crates-io.nokhwa]
+# path = "../nokhwa"
 git = "https://github.com/otak/nokhwa"
 branch = "otak/buff-buffers"
 
