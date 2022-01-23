@@ -187,10 +187,12 @@ fn main_next() -> error::HideResult<()> {
 
     let mut fake_camera = v4l::Device::new(fake_cam_info.index().as_index().unwrap() as usize)?;
     use v4l::video::Output as _;
-    let format = v4l::Format::new(w, h, v4l::FourCC::new(b"RGB3"));
+    let fake_fmt = v4l::Format::new(w, h, v4l::FourCC::new(b"RGB3"));
+    let fake_params = v4l::video::output::Parameters::with_fps(fps);
     // TODO: Use the following line once v4l2loopback supports RGBA
     // let format = v4l::Format::new(w, h, v4l::FourCC::new(b"AB24"));
-    let fake_fmt = fake_camera.set_format(&format)?;
+    let fake_fmt = fake_camera.set_format(&fake_fmt)?;
+    let fame_params = fake_camera.set_params(&fake_params)?;
     log::info!("Fake Camera found at index #{}", fake_cam_info.index());
     log::debug!(
         "Fake camera format: {:?}",
