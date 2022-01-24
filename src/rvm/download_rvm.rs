@@ -73,8 +73,7 @@ pub fn download_rvm_model(kind: RvmModelKind) -> HideResult<std::path::PathBuf> 
 
     let res = attohttpc::get(&download_url).send()?;
 
-    let progress_bar = indicatif::ProgressBar::new_spinner();
-    progress_bar.set_message(format!("Downloading model at {}...", download_url));
+    log::info!("Downloading model at {download_url}...");
 
     let zipfile_path = target_dir.join(format!("{}.zip", model_folder_name));
     let file = std::fs::File::create(&zipfile_path)?;
@@ -88,8 +87,6 @@ pub fn download_rvm_model(kind: RvmModelKind) -> HideResult<std::path::PathBuf> 
 
     // Remove zip file
     std::fs::remove_file(&zipfile_path)?;
-
-    progress_bar.finish();
 
     Ok(model_folder)
 }

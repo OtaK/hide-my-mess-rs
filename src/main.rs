@@ -7,7 +7,7 @@ mod rvm;
 
 #[derive(Debug, clap::Parser)]
 #[clap(about, version, author)]
-/// Virtual camera that blurs your background
+/// Virtual camera reliably crops your wonderful self out of your webcam
 struct Args {
     /// Lists video capture devices present on the system along with their details
     #[clap(short, long = "list")]
