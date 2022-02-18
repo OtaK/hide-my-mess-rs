@@ -2,6 +2,8 @@
 pub enum HideError {
     #[error("vl42loopback device missing! Did you run `sudo modprobe v4l2loopback devices=1 exclusive_caps=1 max_buffers=2 video_nr=2 card_label=\"fake-cam\"`?")]
     FakeCameraMissing,
+    #[error("Your capture device somehow supports NO capture formats! :(")]
+    NoCameraFormats,
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error(transparent)]

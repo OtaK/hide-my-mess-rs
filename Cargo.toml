@@ -2,7 +2,7 @@
 name = "hide-my-mess"
 description = "Virtual camera reliably crops your wonderful self out of your webcam"
 authors = ["Mathieu Amiot <amiot.mathieu@gmail.com>"]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 readme = "README.md"
 repository = "https://github.com/OtaK/hide-my-mess-rs"
@@ -20,19 +20,18 @@ pretty_env_logger = "0.4"
 tensorflow = "0.17"
 clap = { version = "3.0", features = ["derive"] }
 nokhwa = { version = "0.10", features = ["input-v4l"] }
-image = "0.23"
+image = "0.24"
 v4l = "0.12"
 dirs = "4.0"
 zip = "0.5"
 attohttpc = "0.18"
 
 [patch.crates-io.nokhwa]
-# path = "../nokhwa"
-git = "https://github.com/otak/nokhwa"
-branch = "otak/buff-buffers"
+git = "https://github.com/l1npengtul/nokhwa"
+rev = "043d326583c1ea82e0e8f6f62a267cea954a751a"
 
 # [dependencies.nokhwa]
-# version = "0.9"
+# version = "0.10"
 # features = ["input-v4l", "input-msmf", "input-avfoundation"]
 
 [profile.release]

@@ -132,15 +132,21 @@ fn main_next() -> error::HideResult<()> {
     let mut compatible_formats = camera
         .compatible_list_by_resolution(nokhwa::FrameFormat::MJPEG)?
         .into_iter()
-        .filter(|(_res, fps_list)| fps_list.iter().any(|f| *f >= 24))
         .collect::<Vec<(nokhwa::Resolution, Vec<u32>)>>();
 
-    compatible_formats.sort_by(|a, b| a.0.cmp(&b.0));
+    // Fall back on YUYV
+    if compatible_formats.is_empty() {
+        compatible_formats = camera
+            .compatible_list_by_resolution(nokhwa::FrameFormat::YUYV)?
+            .into_iter()
+            .collect::<Vec<(nokhwa::Resolution, Vec<u32>)>>();
+    }
 
     if compatible_formats.is_empty() {
-        log::error!("Your capture device somehow supports NO capture formats! :(");
-        return Ok(());
+        return Err(HideError::NoCameraFormats);
     }
+
+    compatible_formats.sort_by(|a, b| a.0.cmp(&b.0));
 
     let (mut resolution, mut fps) = compatible_formats.pop().unwrap();
     if let Some(w) = args.width {
