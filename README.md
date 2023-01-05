@@ -86,6 +86,7 @@ Requirements:
 
 * Rust
 * `v4l2` & `v4l2loopback`
+* [clang](https://clang.llvm.org/) is required to build `v4l2-sys-mit`
 
 Then:
 
