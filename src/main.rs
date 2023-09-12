@@ -1,5 +1,3 @@
-use crate::error::HideError;
-
 mod error;
 pub use self::error::*;
 
@@ -73,10 +71,10 @@ fn main() -> error::HideResult<()> {
 
 #[inline(always)]
 fn main_next() -> error::HideResult<()> {
-    use clap::StructOpt as _;
+    use clap::Parser as _;
     let args = Args::parse();
 
-    let mut devices = nokhwa::query_devices(nokhwa::CaptureAPIBackend::Auto)?;
+    let mut devices = nokhwa::query(nokhwa::utils::ApiBackend::Auto)?;
     devices.sort_by(|a, b| {
         a.index()
             .as_index()
@@ -114,12 +112,14 @@ fn main_next() -> error::HideResult<()> {
 
     let camera_index = args
         .camera_index
-        .map(|idx| nokhwa::CameraIndex::Index(idx as u32))
+        .map(|idx| nokhwa::utils::CameraIndex::Index(idx as u32))
         .unwrap_or_else(|| devices[0].index().clone());
 
     log::debug!("Selected device index: #{camera_index}");
 
-    let mut camera = nokhwa::Camera::new(&camera_index, None)?;
+    let requested = nokhwa::utils::RequestedFormat::new(nokhwa::utils::RequestedFormatType::None);
+
+    let mut camera = nokhwa::Camera::new(camera_index, requested)?;
 
     let mut format = camera.camera_format();
 
@@ -130,16 +130,16 @@ fn main_next() -> error::HideResult<()> {
     );
 
     let mut compatible_formats = camera
-        .compatible_list_by_resolution(nokhwa::FrameFormat::MJPEG)?
+        .compatible_list_by_resolution(nokhwa::utils::FrameFormat::MJPEG)?
         .into_iter()
-        .collect::<Vec<(nokhwa::Resolution, Vec<u32>)>>();
+        .collect::<Vec<(nokhwa::utils::Resolution, Vec<u32>)>>();
 
     // Fall back on YUYV
     if compatible_formats.is_empty() {
         compatible_formats = camera
-            .compatible_list_by_resolution(nokhwa::FrameFormat::YUYV)?
+            .compatible_list_by_resolution(nokhwa::utils::FrameFormat::YUYV)?
             .into_iter()
-            .collect::<Vec<(nokhwa::Resolution, Vec<u32>)>>();
+            .collect::<Vec<(nokhwa::utils::Resolution, Vec<u32>)>>();
     }
 
     if compatible_formats.is_empty() {
@@ -172,7 +172,10 @@ fn main_next() -> error::HideResult<()> {
         format.frame_rate()
     );
 
-    camera.set_camera_format(format)?;
+    camera.set_camera_requset(nokhwa::utils::RequestedFormat::with_formats(
+        nokhwa::utils::RequestedFormatType::Exact(format),
+        &[format.format()],
+    ))?;
 
     let (w, h) = (
         camera.camera_format().resolution().width(),
@@ -235,7 +238,7 @@ fn main_next() -> error::HideResult<()> {
     let mut canvas = background.clone();
 
     loop {
-        camera.frame_to_buffer(&mut frame, true)?;
+        camera.write_frame_to_buffer(&mut frame)?;
 
         use image::GenericImage as _;
         if args.dynamic_background_blur {
