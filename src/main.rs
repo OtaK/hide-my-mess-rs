@@ -1,5 +1,3 @@
-use crate::error::HideError;
-
 mod error;
 pub use self::error::*;
 
@@ -19,7 +17,7 @@ struct Args {
     #[clap(short, long)]
     width: Option<u32>,
     /// Desired frame capture height. If not available, it'll fallback to the highest mode detected
-    #[clap(short, long)]
+    #[clap(short = 'H', long)]
     height: Option<u32>,
     /// Desired capture framerate. If not available, it'll fallback to the highest mode detected
     #[clap(long)]
@@ -73,10 +71,10 @@ fn main() -> error::HideResult<()> {
 
 #[inline(always)]
 fn main_next() -> error::HideResult<()> {
-    use clap::StructOpt as _;
+    use clap::Parser as _;
     let args = Args::parse();
 
-    let mut devices = nokhwa::query_devices(nokhwa::CaptureAPIBackend::Auto)?;
+    let mut devices = nokhwa::query(nokhwa::utils::ApiBackend::Auto)?;
     devices.sort_by(|a, b| {
         a.index()
             .as_index()
@@ -92,6 +90,7 @@ fn main_next() -> error::HideResult<()> {
                 "Found {} device(s) currently connected to this system: ",
                 devices.len()
             );
+
             for d in devices {
                 log::info!(
                     "Index #{}: {} via [{}]@[{}]",
@@ -114,12 +113,16 @@ fn main_next() -> error::HideResult<()> {
 
     let camera_index = args
         .camera_index
-        .map(|idx| nokhwa::CameraIndex::Index(idx as u32))
+        .map(|idx| nokhwa::utils::CameraIndex::Index(idx as u32))
         .unwrap_or_else(|| devices[0].index().clone());
 
     log::debug!("Selected device index: #{camera_index}");
 
-    let mut camera = nokhwa::Camera::new(&camera_index, None)?;
+    let requested = nokhwa::utils::RequestedFormat::new::<nokhwa::pixel_format::RgbAFormat>(
+        nokhwa::utils::RequestedFormatType::None,
+    );
+
+    let mut camera = nokhwa::Camera::new(camera_index, requested)?;
 
     let mut format = camera.camera_format();
 
@@ -129,17 +132,21 @@ fn main_next() -> error::HideResult<()> {
         camera.info().human_name()
     );
 
+    log::debug!("Camera has format {}", camera.camera_format());
+
+    let mut is_yuyv = false;
     let mut compatible_formats = camera
-        .compatible_list_by_resolution(nokhwa::FrameFormat::MJPEG)?
+        .compatible_list_by_resolution(nokhwa::utils::FrameFormat::MJPEG)?
         .into_iter()
-        .collect::<Vec<(nokhwa::Resolution, Vec<u32>)>>();
+        .collect::<Vec<(nokhwa::utils::Resolution, Vec<u32>)>>();
 
     // Fall back on YUYV
     if compatible_formats.is_empty() {
         compatible_formats = camera
-            .compatible_list_by_resolution(nokhwa::FrameFormat::YUYV)?
+            .compatible_list_by_resolution(nokhwa::utils::FrameFormat::YUYV)?
             .into_iter()
-            .collect::<Vec<(nokhwa::Resolution, Vec<u32>)>>();
+            .collect::<Vec<(nokhwa::utils::Resolution, Vec<u32>)>>();
+        is_yuyv = true;
     }
 
     if compatible_formats.is_empty() {
@@ -165,14 +172,26 @@ fn main_next() -> error::HideResult<()> {
         format.set_frame_rate(fps.pop().unwrap())
     }
 
+    format.set_format(if is_yuyv {
+        nokhwa::utils::FrameFormat::YUYV
+    } else {
+        nokhwa::utils::FrameFormat::MJPEG
+    });
+
     log::info!(
-        "Camera Format selected: {}x{}@{}fps",
+        "Camera Format selected: {}x{}@{}fps [{}]",
         format.resolution().width(),
         format.resolution().height(),
-        format.frame_rate()
+        format.frame_rate(),
+        format.format(),
     );
 
-    camera.set_camera_format(format)?;
+    let new_fmt = camera.set_camera_requset(nokhwa::utils::RequestedFormat::with_formats(
+        nokhwa::utils::RequestedFormatType::Exact(format),
+        &[format.format()],
+    ))?;
+
+    log::debug!("Camera is now using {new_fmt:?}");
 
     let (w, h) = (
         camera.camera_format().resolution().width(),
@@ -180,8 +199,9 @@ fn main_next() -> error::HideResult<()> {
     );
 
     log::info!(
-        "Active Camera Format: {w}x{h}@{}fps",
+        "Active Camera Format: {w}x{h}@{}fps [{}]",
         camera.camera_format().frame_rate(),
+        camera.camera_format().format(),
     );
 
     let fake_cam_info = match devices.iter().find(|info| info.human_name() == "fake-cam") {
@@ -206,7 +226,7 @@ fn main_next() -> error::HideResult<()> {
     );
     log::debug!("Fake camera params: {:?}", fake_params);
 
-    let buf_size = camera.min_buffer_size(true);
+    let buf_size = w as usize * h as usize * 4;
     log::debug!("Buffer size: {buf_size}");
     let mut frame =
         image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(w, h, vec![0; buf_size]).unwrap();
@@ -235,7 +255,7 @@ fn main_next() -> error::HideResult<()> {
     let mut canvas = background.clone();
 
     loop {
-        camera.frame_to_buffer(&mut frame, true)?;
+        camera.write_frame_to_buffer::<nokhwa::pixel_format::RgbAFormat>(&mut frame)?;
 
         use image::GenericImage as _;
         if args.dynamic_background_blur {
